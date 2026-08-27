@@ -270,7 +270,7 @@ class Readme(unittest.TestCase):
         self.assertIn("Apache License", text)
 
     def test_version(self) -> None:
-        self.assertEqual(_json(ROOT / "plugin.json")["version"], "0.2.0")
+        self.assertEqual(_json(ROOT / "plugin.json")["version"], Version.VERSION)
 
     def test_github_org(self) -> None:
         env = os.environ.get("GITHUB_REPOSITORY")
@@ -376,7 +376,7 @@ class Version(unittest.TestCase):
     stopped guarding.
     """
 
-    VERSION = "0.2.0"
+    VERSION = "0.2.1"
     DECLARED = {
         'plugin.json',
     }
@@ -451,6 +451,24 @@ class Version(unittest.TestCase):
         }
         self.assertEqual(by_text, self.DECLARED, "a manifest gained or lost its version")
         self.assertEqual(reached, self.DECLARED, "the JSON walk missed a stated version")
+
+    def test_the_release_number_is_written_down_exactly_once_in_this_suite(self) -> None:
+        """`VERSION` above is the only place the tests name it.
+
+        Ported from claude-memvara, which learned it the same way this repository just
+        did: another test asserted the release literally, so a bump had to be applied in
+        two places and one of them was missed. Every extra place is the mechanism a
+        partial bump needs, and a partial bump is what tells a client it is current while
+        the contents moved underneath it.
+
+        The duplicates that prompted this now read `Version.VERSION` instead, which is
+        why they no longer count.
+        """
+        source = pathlib.Path(__file__).read_text(encoding="utf-8")
+        self.assertEqual(
+            source.count(f'"{self.VERSION}"'), 1,
+            f"{self.VERSION} appears more than once in this file; VERSION is meant to be "
+            "the single place the suite states the release")
 
 
 if __name__ == "__main__":
