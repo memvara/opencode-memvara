@@ -44,11 +44,16 @@ to be there.
 
 ## When the browser sign-in will not finish
 
-The skill ships `skills/memvara/scripts/memvara_auth.py`: the device-code
-flow, standard library only, no `pip install`, and nothing left running
-when it returns. Ask OpenCode to authenticate memvara and it runs the
-script, which prints a short code and a URL for you to approve and then
-writes `~/.memvara/credentials.json`. It also does `logout` and `stats`.
+The skill carries `scripts/memvara_auth.py` — inside the skill directory,
+so wherever you copied `skills/memvara` to above, it is `scripts/memvara_auth.py`
+under that. In this repository that is `skills/memvara/scripts/memvara_auth.py`;
+after a global copy it is `~/.config/opencode/skills/memvara/scripts/memvara_auth.py`.
+
+It is the device-code flow, standard library only, no `pip install`, and
+nothing left running when it returns. Ask OpenCode to authenticate memvara
+and it runs the script, which prints a short code and a URL for you to
+approve and then writes `~/.memvara/credentials.json`. It also does
+`logout` and `stats`.
 
 OpenCode reads slash commands from `~/.config/opencode/commands/` and
 `.opencode/commands/`, which are yours rather than this repo's, so there

@@ -555,6 +555,13 @@ class AuthScript(unittest.TestCase):
         self.assertIn(quoted, text, "the README never mentions the auth script")
         self.assertTrue((ROOT / quoted).is_file(),
                         f"the README says {quoted}, and nothing is there")
+        # Resolving against ROOT is right for THIS checkout and wrong for the reader, who
+        # was told two paragraphs earlier to copy the skill somewhere else. So the README
+        # has to say where it lands there too, or the only path it gives is the one that
+        # does not exist on the machine following its instructions.
+        self.assertIn("~/.config/opencode/skills/memvara/scripts/memvara_auth.py", text,
+                      "the README gives the in-repo path only, and a reader who copied "
+                      "the skill has no path that resolves on their machine")
         self.assertIn("no `pip install`", text,
                       "the README does not say the script needs nothing installed, "
                       "which is the reason it can rescue a locked-out machine")
@@ -584,9 +591,12 @@ class AuthScript(unittest.TestCase):
 class SkillDiscovery(unittest.TestCase):
     """This host loads Claude skill folders, and the README used to say it does not.
 
-    The old text told the reader to paste SKILL.md into AGENTS.md because "OpenCode does
-    not load Claude skill folders automatically". Measured against opencode 1.18.20 on
-    2026-08-31 that is false: with the skill present only at `~/.claude/skills/memvara`,
+    The old text told the reader to paste SKILL.md into AGENTS.md, on the grounds that
+    this host ignored those directories. (The sentence itself is not reproduced here: the
+    tripwire below cannot tell a quotation from an assertion, it reads only README.md
+    today, and a sibling repo's equivalent already scans every markdown file it owns.)
+    Measured against opencode 1.18.20 on 2026-08-31 the grounds were false: with the
+    skill present only at `~/.claude/skills/memvara`,
     `opencode run` listed `memvara` among its available skills. The instruction was
     costing every reader manual work the host had stopped requiring.
 
