@@ -12,6 +12,7 @@ import pathlib
 import re
 import ssl
 import subprocess
+import sys
 import tempfile
 import unittest
 import urllib.request
@@ -469,6 +470,161 @@ class Version(unittest.TestCase):
             source.count(f'"{self.VERSION}"'), 1,
             f"{self.VERSION} appears more than once in this file; VERSION is meant to be "
             "the single place the suite states the release")
+
+
+def _readme_prose(root: pathlib.Path) -> str:
+    """The README with every run of whitespace collapsed to one space.
+
+    Prose wraps, and where it wraps is not a fact about what it says. Matching raw text
+    pins a line break: a reflow turns a guard red while the sentence it guards is present
+    and correct, and the cheapest way out of that is to delete the guard. It matters for
+    the negative assertions too -- a claim reintroduced with a different wrap slips past
+    `assertNotIn` on the raw text.
+    """
+    return " ".join(root.joinpath("README.md").read_text(encoding="utf-8").split())
+
+
+class ModuleShape(unittest.TestCase):
+    """Nothing may be defined below `unittest.main()`.
+
+    Measured in the two sibling repos before this one: a class appended to the end of the
+    file, after the `__main__` block, is collected by `unittest discover` and NOT by
+    `python3 test/test_plugin.py`. Both printed OK -- 26 tests one way and 21 the other,
+    with nothing in the output saying so. A passing run must not be able to mean "the
+    check never ran", so the shape gets a guard rather than a comment.
+    """
+
+    def test_nothing_is_defined_after_the_main_block(self) -> None:
+        import ast
+
+        body = ast.parse(pathlib.Path(__file__).read_text(encoding="utf-8")).body
+        guards = [i for i, node in enumerate(body)
+                  if isinstance(node, ast.If) and "__main__" in ast.dump(node.test)]
+        self.assertEqual(len(guards), 1, "expected exactly one __main__ block")
+        after = [type(node).__name__ for node in body[guards[0] + 1:]]
+        self.assertEqual(
+            after, [],
+            f"{after} is defined after `unittest.main()`, so "
+            "`python3 test/test_plugin.py` runs without it and still prints OK")
+
+
+class AuthScript(unittest.TestCase):
+    """The skill ships the device-code flow, because this host has nowhere else for it.
+
+    OpenCode reads slash commands from `~/.config/opencode/commands/` and
+    `.opencode/commands/` -- the user's directories, not this repository's -- so there is
+    no `/memvara authenticate` to ship. What it does load is the skill, and skill-relative
+    paths were measured on it: a probe skill whose SKILL.md held no nonce and pointed at a
+    sibling file produced `Skill "mvprobe"` then `Read .../references/secret.md` and
+    returned the nonce, and returned `NO PROBE` with the registration removed and every
+    file still on disk.
+
+    `SkillTree` already diffs the bytes against the library. These check what vendoring
+    cannot: that the file is here, that it RUNS, and that a person is told it exists.
+    """
+
+    SCRIPT = SKILL / "scripts" / "memvara_auth.py"
+    COMMANDS = ("authenticate", "login", "logout", "stats")
+
+    def test_the_skill_ships_the_auth_script(self) -> None:
+        """Positive, because the failure to catch is a deletion."""
+        self.assertTrue(
+            self.SCRIPT.is_file(),
+            f"{self.SCRIPT.relative_to(ROOT)} is missing; the README tells the user it "
+            "is there and the skill tells the model to run it")
+
+    def test_the_script_runs_here_and_names_every_command(self) -> None:
+        """Executed rather than read, on the interpreter running this suite.
+
+        A byte diff against the library cannot see a broken script: a library that
+        shipped one hands every repo two copies that are equally broken and agree.
+        """
+        done = subprocess.run(
+            [sys.executable, str(self.SCRIPT), "not-a-command"],
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        for command in self.COMMANDS:
+            self.assertIn(command, done.stdout,
+                          f"the usage this prints omits {command}")
+
+    def test_the_readme_says_the_script_is_here_and_where(self) -> None:
+        """The path is asserted and then RESOLVED, so a README naming a plausible path
+        into the wrong directory fails here rather than sending someone nowhere."""
+        text = _readme_prose(ROOT)
+        quoted = "skills/memvara/scripts/memvara_auth.py"
+        self.assertIn(quoted, text, "the README never mentions the auth script")
+        self.assertTrue((ROOT / quoted).is_file(),
+                        f"the README says {quoted}, and nothing is there")
+        # Resolving against ROOT is right for THIS checkout and wrong for the reader, who
+        # was told two paragraphs earlier to copy the skill somewhere else. So the README
+        # has to say where it lands there too, or the only path it gives is the one that
+        # does not exist on the machine following its instructions.
+        self.assertIn("~/.config/opencode/skills/memvara/scripts/memvara_auth.py", text,
+                      "the README gives the in-repo path only, and a reader who copied "
+                      "the skill has no path that resolves on their machine")
+        self.assertIn("no `pip install`", text,
+                      "the README does not say the script needs nothing installed, "
+                      "which is the reason it can rescue a locked-out machine")
+
+    def test_the_readme_says_this_host_ships_no_slash_command(self) -> None:
+        """The reduced port, stated in the shipped artifact rather than in a plan.
+
+        Positive -- the sentence must be PRESENT -- so deleting the explanation fails
+        exactly as loudly as never writing it.
+        """
+        text = _readme_prose(ROOT)
+        self.assertIn("no `/memvara authenticate` shipped here", text)
+
+    def test_the_readme_no_longer_promises_no_python(self) -> None:
+        """It said "there is no local Python process", and now one ships.
+
+        Both directions, and against normalised prose so a rewrapped reintroduction is
+        still caught.
+        """
+        text = _readme_prose(ROOT)
+        self.assertNotIn("no local Python process", text,
+                         "the README still claims no Python ships, and a Python script "
+                         "is sitting in skills/memvara/scripts/")
+        self.assertIn("Nothing runs in the background", text)
+
+
+class SkillDiscovery(unittest.TestCase):
+    """This host loads Claude skill folders, and the README used to say it does not.
+
+    The old text told the reader to paste SKILL.md into AGENTS.md, on the grounds that
+    this host ignored those directories. (The sentence itself is not reproduced here: the
+    tripwire below cannot tell a quotation from an assertion, it reads only README.md
+    today, and a sibling repo's equivalent already scans every markdown file it owns.)
+    Measured against opencode 1.18.20 on 2026-08-31 the grounds were false: with the
+    skill present only at `~/.claude/skills/memvara`,
+    `opencode run` listed `memvara` among its available skills. The instruction was
+    costing every reader manual work the host had stopped requiring.
+
+    Guarded positively, and by naming the directories, because "the README does not say
+    the wrong thing" passes on a README that has stopped saying anything.
+    """
+
+    def test_the_readme_names_where_this_host_looks_for_skills(self) -> None:
+        text = _readme_prose(ROOT)
+        for where in ("~/.config/opencode/skills/memvara",
+                      ".opencode/skills/memvara",
+                      "~/.claude/skills/"):
+            self.assertIn(where, text,
+                          f"the README does not tell the reader about {where}")
+
+    def test_the_readme_does_not_restate_the_claim_that_was_wrong(self) -> None:
+        """A tripwire on the exact sentence, paired with the positive test above -- which
+        is what keeps this from being a guard a deletion satisfies.
+
+        It caught the commit that added it. The first draft of the README explained the
+        correction by QUOTING the old claim, and a tripwire cannot tell a quotation from
+        an assertion. This repository has met that before and answered it the same way:
+        `CLAUDE.md` states the tool-count rule without quoting a wrong count, deliberately,
+        because an illustrative figure in prose is indistinguishable from a claim. So the
+        historical note says what changed without reproducing the sentence.
+        """
+        text = _readme_prose(ROOT)
+        self.assertNotIn("does not load Claude skill folders", text)
 
 
 if __name__ == "__main__":

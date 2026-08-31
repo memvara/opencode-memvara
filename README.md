@@ -20,17 +20,45 @@ Paste this into `opencode.json` (project) or `~/.config/opencode/opencode.json`:
 
 The first time OpenCode talks to the server it opens a browser so you can
 click Allow. You can also run `opencode mcp auth memvara`. That grant lasts
-90 days. There is no local Python process and we do not use an API key.
+90 days. Nothing runs in the background and no API key ships in this repo.
 
 Do **not** add this repo to OpenCode's `"plugin": [...]` array. That path
 loads JavaScript hooks on `session.*`; Memvara does not ship those.
 
 ## Skill
 
-The judgment that spans tools is in `skills/memvara/SKILL.md`. OpenCode
-does not load Claude skill folders automatically. Paste the file into
-[AGENTS.md](https://opencode.ai/docs/rules/) or keep it next to the project
-and point the agent at it.
+The judgment that spans tools is in `skills/memvara/SKILL.md`. Copy the
+`skills/memvara` directory to `~/.config/opencode/skills/memvara` (global)
+or `.opencode/skills/memvara` (per project) and OpenCode picks it up.
+
+It also scans `.claude/skills/` and `~/.claude/skills/`, so a machine that
+already has the Claude Code plugin installed has the skill available in
+OpenCode with nothing further to do. Measured against opencode 1.18.20 on
+2026-08-31: with the skill present only at `~/.claude/skills/memvara`,
+`opencode run` listed `memvara` among its available skills.
+
+An earlier version of this file told you to paste the skill into AGENTS.md,
+because at the time this host did not pick those directories up. That has
+stopped being so; if you followed it, the copy in AGENTS.md no longer needs
+to be there.
+
+## When the browser sign-in will not finish
+
+The skill carries `scripts/memvara_auth.py` — inside the skill directory,
+so wherever you copied `skills/memvara` to above, it is `scripts/memvara_auth.py`
+under that. In this repository that is `skills/memvara/scripts/memvara_auth.py`;
+after a global copy it is `~/.config/opencode/skills/memvara/scripts/memvara_auth.py`.
+
+It is the device-code flow, standard library only, no `pip install`, and
+nothing left running when it returns. Ask OpenCode to authenticate memvara
+and it runs the script, which prints a short code and a URL for you to
+approve and then writes `~/.memvara/credentials.json`. It also does
+`logout` and `stats`.
+
+OpenCode reads slash commands from `~/.config/opencode/commands/` and
+`.opencode/commands/`, which are yours rather than this repo's, so there
+is no `/memvara authenticate` shipped here. Asking in words is the
+interface on this host.
 
 ## Installer
 
