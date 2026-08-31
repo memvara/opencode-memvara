@@ -6,6 +6,6 @@
 # no hooks.json here and nothing generates one; tools/generate.py refuses this host by
 # name for exactly that reason.
 repo=memvara/memvara
-sha=e950da0cdb14374341de48f31fa1531f1df16630
+sha=e0552014652efe3b998d9ae7367c073c9a9f1f83
 path=plugin/hooks
 host=opencode
