@@ -1,5 +1,5 @@
 {
   "name": "memvara",
   "version": "0.2.3",
-  "description": "Remote Memvara MCP for OpenCode. Not a JavaScript session plugin."
+  "description": "Hosted Memvara MCP for OpenCode, plus the skill and a JavaScript plugin that recalls on every message and captures when a session goes idle."
 }

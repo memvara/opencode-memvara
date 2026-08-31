@@ -122,15 +122,62 @@ def _library_skill_files(sha: str) -> "set[str]":
             if entry.get("type") == "blob" and entry["path"].startswith(prefix)}
 
 
-def _lock() -> dict[str, str]:
+def _library_files(sha: str, path: str) -> "set[str]":
+    """Every path under `path` at `sha`, relative to `path`.
+
+    The hook twin of `_library_skill_files`, and separate from it on purpose: that one
+    hardcodes the packaged-skill prefix, and widening it to take a path would have made
+    every existing caller pass an argument to say what it already meant.
+    """
+    root = os.environ.get("MEMVARA_LIBRARY")
+    prefix = f"{path}/"
+    if root:
+        try:
+            out = subprocess.check_output(
+                ["git", "-C", root, "ls-tree", "-r", "--name-only", sha, path],
+                stderr=subprocess.DEVNULL).decode()
+        except subprocess.CalledProcessError:
+            out = None
+        if out is not None:
+            return {line[len(prefix):] for line in out.splitlines()
+                    if line.startswith(prefix)}
+    try:
+        tree = json.loads(_fetch(
+            f"https://api.github.com/repos/memvara/memvara/git/trees/{sha}?recursive=1"))
+    except Exception as exc:
+        raise LibraryUnreachable(str(exc)) from exc
+    return {entry["path"][len(prefix):] for entry in tree.get("tree", [])
+            if entry.get("type") == "blob" and entry["path"].startswith(prefix)}
+
+
+def _lock(name: str = "skill.lock") -> dict[str, str]:
     out: dict[str, str] = {}
-    for line in (ROOT / "skill.lock").read_text(encoding="utf-8").splitlines():
+    for line in (ROOT / name).read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         key, _, value = line.partition("=")
         out[key.strip()] = value.strip()
     return out
+
+
+#: The vendored hook tree, and the library path it is vendored from.
+HOOKS = ROOT / "hooks"
+LIBRARY_HOOKS_PATH = "plugin/hooks"
+
+#: Hook scripts are executable content OpenCode loads into its own process and runs on
+#: every message, so the allowlist names them one by one. A file appearing under `hooks/`
+#: that nobody listed here is the failure this gate exists to catch.
+ALLOWED_HOOK_FILES = {
+    "run.py", "recall.py", "capture.py", "session_start.py", "approve.py", "daemon.py",
+    "core/__init__.py", "core/host.py", "core/envelope.py",
+    "hosts/__init__.py", "hosts/claude.py", "hosts/opencode.py",
+    "js/shim.mjs", "js/opencode.mjs",
+    "lib/__init__.py", "lib/extract.py", "lib/fast.py", "lib/hosted.py", "lib/ipc.py",
+    "lib/open.py", "lib/standing.py", "lib/transcript.py", "lib/usage.py",
+    "lib/write.py",
+    "tools/__init__.py", "tools/generate.py",
+}
 
 
 class ExampleConfig(unittest.TestCase):
@@ -166,31 +213,78 @@ class ExampleConfig(unittest.TestCase):
 
 
 class Installer(unittest.TestCase):
-    def test_writes_mcp_block(self) -> None:
+    """It writes both halves now, and it used to refuse the second one.
+
+    Until 0.2.5 `test_refuses_js_plugin_array` asserted the installer THREW on a config
+    that named this repo as a JS plugin, because Memvara shipped no hooks and a config
+    that said otherwise was a mistake. This repository ships them now, so that assertion
+    is replaced rather than deleted: the refusal below is the one that still matters --
+    a plugin path that does not resolve.
+    """
+
+    def test_writes_both_the_endpoint_and_the_plugin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cfg = pathlib.Path(tmp) / "opencode.json"
             subprocess.check_call(
-                ["node", str(ROOT / "bin" / "install.mjs"), "--config", str(cfg)],
-            )
+                ["node", str(ROOT / "bin" / "install.mjs"), "--config", str(cfg)])
             body = _json(cfg)
             self.assertEqual(body["mcp"]["memvara"]["url"], HOSTED)
             self.assertEqual(body["mcp"]["memvara"]["type"], "remote")
-            self.assertNotIn("plugin", body)
+            # The plugin path must BE the vendored module, not merely be present. A
+            # config naming some other file is a plugin that installs and never recalls.
+            self.assertEqual(
+                [pathlib.Path(x).resolve() for x in body["plugin"]],
+                [(HOOKS / "js" / "opencode.mjs").resolve()],
+                "the installer wrote a plugin entry that is not this repo's module")
 
-    def test_refuses_js_plugin_array(self) -> None:
+    def test_mcp_only_writes_no_plugin(self) -> None:
+        """The old behaviour, still reachable, because it is a real choice.
+
+        A user who wants the endpoint and nothing running locally has to be able to say
+        so. Without this the only way to get it would be to hand-edit the file the
+        installer just wrote, which is the shape that makes people skip the installer.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             cfg = pathlib.Path(tmp) / "opencode.json"
-            cfg.write_text(
-                json.dumps({"plugin": ["opencode-memvara"]}),
-                encoding="utf-8",
-            )
+            subprocess.check_call(
+                ["node", str(ROOT / "bin" / "install.mjs"),
+                 "--config", str(cfg), "--mcp-only"])
+            body = _json(cfg)
+            self.assertEqual(body["mcp"]["memvara"]["url"], HOSTED)
+            self.assertNotIn("plugin", body)
+
+    def test_running_it_twice_registers_one_plugin(self) -> None:
+        """Appending blindly would register the module twice, and OpenCode would load it
+        twice -- two recalls injected per message, and two captures per idle."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = pathlib.Path(tmp) / "opencode.json"
+            for _ in range(2):
+                subprocess.check_call(
+                    ["node", str(ROOT / "bin" / "install.mjs"), "--config", str(cfg)])
+            self.assertEqual(len(_json(cfg)["plugin"]), 1)
+
+    def test_it_refuses_to_write_a_plugin_path_that_does_not_resolve(self) -> None:
+        """The refusal that replaced the old one.
+
+        OpenCode does not report a plugin entry that fails to load, so a config naming a
+        missing file is a plugin that is installed, listed, and silently never runs --
+        indistinguishable, from the outside, from one that is working.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            # A copy of the installer with no hooks tree beside it: the state a partial
+            # checkout or an interrupted vendor leaves behind.
+            bin_dir = pathlib.Path(tmp) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "install.mjs").write_bytes(
+                (ROOT / "bin" / "install.mjs").read_bytes())
+            cfg = pathlib.Path(tmp) / "opencode.json"
             proc = subprocess.run(
-                ["node", str(ROOT / "bin" / "install.mjs"), "--config", str(cfg)],
-                capture_output=True,
-                text=True,
-            )
+                ["node", str(bin_dir / "install.mjs"), "--config", str(cfg)],
+                capture_output=True, text=True)
             self.assertNotEqual(proc.returncode, 0)
-            self.assertIn("JS plugin", proc.stderr + proc.stdout)
+            self.assertIn("refusing to write", proc.stderr + proc.stdout)
+            self.assertFalse(cfg.exists(),
+                             "it refused and still wrote the config")
 
 
 class SkillTree(unittest.TestCase):
@@ -264,7 +358,15 @@ class Readme(unittest.TestCase):
         self.assertIn('"type": "remote"', text)
         self.assertIn("plugin", text.lower())
         self.assertNotIn("npx ", text)
-        self.assertIn("Do **not** add this repo to OpenCode's", text)
+        # The page used to carry "Do **not** add this repo to OpenCode's `plugin` array".
+        # It shipped no hooks then and the instruction was right; it ships them now and
+        # the installer writes exactly that entry, so the sentence must be gone. Stated
+        # as an absence AND as a presence, because an absence alone is satisfied by a
+        # README that has stopped describing the install at all.
+        self.assertNotIn("Do **not** add this repo to OpenCode's", text)
+        self.assertIn("--mcp-only", text,
+                      "the README does not tell the reader how to get the endpoint "
+                      "without the local process")
 
     def test_license(self) -> None:
         text = (ROOT / "LICENSE").read_text(encoding="utf-8")
@@ -342,9 +444,167 @@ class SharedInstructions(unittest.TestCase):
 
 
 class Hygiene(unittest.TestCase):
-    def test_no_hooks(self) -> None:
-        self.assertFalse((ROOT / "hooks").exists())
+    def test_no_app_manifest(self) -> None:
+        """`hooks/` used to be asserted absent here beside `.app.json`, and is not any
+        more: this repository ships it. The half that replaced that assertion is the
+        `Hooks` class below, which is strictly stronger than "the directory is absent" --
+        it names every file in the tree one by one and compares all of them against the
+        library. An emptied `hooks/` fails those and would have satisfied the assertion
+        removed here."""
         self.assertFalse((ROOT / ".app.json").exists())
+
+
+class Hooks(unittest.TestCase):
+    """The tree OpenCode loads into its own process, and runs unasked on every message.
+
+    Vendored byte for byte from `memvara/memvara` with ZERO transforms -- stricter than
+    `skill.lock`, which sanctions exactly one line. Two comparisons, because they catch
+    different failures: one against the sha the lock names, and one against the library's
+    current default branch. The first alone is satisfied forever by a lock and a copy
+    frozen together, which is how the vendored skill in this family once shipped five
+    commits behind for four days while every test passed.
+    """
+
+    def _ours(self) -> "set[str]":
+        """Every vendored file, relative to `hooks/`, POSIX-spelled.
+
+        `__pycache__` is dropped: running a hook writes bytecode next to it, it is
+        gitignored and never committed, and failing on it would fail on every machine
+        that has used the plugin once.
+        """
+        return {path.relative_to(HOOKS).as_posix() for path in HOOKS.rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts}
+
+    def test_the_vendored_hook_bytes_match_the_library_at_the_pinned_sha(self) -> None:
+        lock = _lock("hooks.lock")
+        self.assertEqual(lock["repo"], "memvara/memvara")
+        self.assertEqual(lock["path"], LIBRARY_HOOKS_PATH)
+        self.assertEqual(lock["host"], "opencode")
+        sha = lock["sha"]
+        self.assertEqual(len(sha), 40, f"hooks.lock sha is not a full sha: {sha!r}")
+
+        ours = self._ours()
+        self.assertTrue(ours, "no vendored hook files found — this guard would pass on "
+                              "an empty tree, which is the shape it exists to stop")
+        try:
+            upstream = _library_files(sha, LIBRARY_HOOKS_PATH)
+        except LibraryUnreachable as exc:
+            raise unittest.SkipTest(
+                f"library unreachable, vendored bytes NOT checked: {exc}") from exc
+        self.assertEqual(ours, upstream,
+                         f"the vendored hook file set differs from the library@{sha[:7]}")
+        drifted = [rel for rel in sorted(ours)
+                   if (HOOKS / rel).read_bytes()
+                   != _library_bytes(sha, f"{LIBRARY_HOOKS_PATH}/{rel}")]
+        self.assertEqual(drifted, [], f"vendored hooks drifted from {sha[:7]}: {drifted}")
+
+    def test_the_vendored_hooks_are_not_behind_the_library(self) -> None:
+        """The whole tree, and the file SET, against the library's CURRENT branch.
+
+        Skips loudly rather than passing when the library cannot be reached: a check that
+        passes because it could not look is the failure one level up.
+        """
+        try:
+            head = _library_head()
+            upstream = _library_files(head, LIBRARY_HOOKS_PATH)
+        except LibraryUnreachable as exc:
+            raise unittest.SkipTest(
+                f"library unreachable, hook drift NOT checked: {exc}") from exc
+        self.assertTrue(upstream, "the library reported an empty hook tree")
+        self.assertEqual(self._ours(), upstream,
+                         f"the vendored hook file set differs from the library at "
+                         f"{head[:7]} — re-vendor and update hooks.lock")
+
+    def test_the_hook_file_set_is_named_here_one_by_one(self) -> None:
+        """A file the client executes that nobody listed is the thing to catch."""
+        extra = self._ours() - ALLOWED_HOOK_FILES
+        self.assertFalse(extra, f"unlisted hook files: {sorted(extra)} — add them to "
+                                "ALLOWED_HOOK_FILES deliberately, having read them")
+
+    def test_the_allowlist_names_nothing_that_is_no_longer_in_the_tree(self) -> None:
+        """The direction that is easy to leave out. A file deleted upstream leaves its
+        entry behind, the entry covers nothing, and a list that has stopped covering a
+        file looks exactly like a list that covers everything."""
+        missing = ALLOWED_HOOK_FILES - self._ours()
+        self.assertFalse(missing, f"allowlist names files that are gone: {sorted(missing)}")
+
+    def test_this_repository_ships_the_record_its_lock_binds(self) -> None:
+        """`hooks.lock` says `host=opencode`; that record has to be in the tree.
+
+        Bound and shipped are different facts, and the pair is what makes the binding
+        real: a lock naming a record nobody vendored produces `skipped=unknown host` on
+        every event, in a log file, forever.
+        """
+        self.assertEqual(_lock("hooks.lock")["host"], "opencode")
+        self.assertTrue((HOOKS / "hosts" / "opencode.py").is_file())
+
+    def test_no_shell_registration_manifest_is_shipped(self) -> None:
+        """`hooks.json` is a Claude-shaped manifest of shell commands. OpenCode registers
+        a JavaScript module instead, and `tools/generate.py` refuses to build one for this
+        host by name. A `hooks.json` sitting here would be a file that registers nothing
+        on this client while reading, to anyone who opened it, as the registration."""
+        self.assertFalse((HOOKS / "hooks.json").exists())
+
+    def test_the_plugin_module_reaches_the_entry_point_it_names(self) -> None:
+        """The module resolves `run.py` from its own location, and that file must be
+        there. `is_file()` alone would not be enough anywhere a path could point at the
+        wrong file, so this compares the RESOLVED path to the entry point itself."""
+        module = HOOKS / "js" / "opencode.mjs"
+        self.assertTrue(module.is_file())
+        text = module.read_text(encoding="utf-8")
+        self.assertIn('new URL("..", import.meta.url)', text,
+                      "the module no longer derives the hooks directory from its own "
+                      "location, so a vendored copy would run some other checkout's hooks")
+        self.assertEqual((module.parent.parent / "run.py").resolve(),
+                         (HOOKS / "run.py").resolve())
+
+    def test_the_reply_this_host_reads_is_flat(self) -> None:
+        """OpenCode's shim parses a flat object; Claude's nested `hookSpecificOutput`
+        shape would parse as valid JSON and carry no context at all.
+
+        This renders the record directly rather than running `recall` and reading its
+        stdout. The first version did the latter and was WORTHLESS: recall dedups per
+        session and answers nothing for a prompt it has already served, so the test hit
+        its own "nothing to say" skip on a machine with a live store -- and reported
+        `OK (skipped=1)` with the envelope deliberately switched to "nested". A guard
+        that skips is not a guard, and one that skips on the developer's own machine is
+        one nobody will ever see fail.
+        """
+        sys.path.insert(0, str(HOOKS))
+        try:
+            from core import envelope  # noqa: PLC0415
+            from core.host import Reply  # noqa: PLC0415
+            import hosts.opencode as record  # noqa: PLC0415
+        finally:
+            sys.path.remove(str(HOOKS))
+        rendered = envelope.render(
+            record.HOST, Reply(hook="recall", status="a status line", context="CTX"))
+        body = json.loads(rendered)
+        self.assertEqual(body.get("additionalContext"), "CTX",
+                         "context is not at the top level, so the shim will not find it")
+        self.assertNotIn("hookSpecificOutput", body,
+                         "the record renders Claude's nested shape; the shim reads a "
+                         "flat object and would deliver nothing")
+        self.assertNotIn("systemMessage", body,
+                         "a status line was rendered for a host that has no channel to "
+                         "show one, so the renderer is inventing a key nobody reads")
+
+    def test_a_hook_never_fails_a_turn_whatever_the_environment(self) -> None:
+        """No home directory, no store, no credentials: exit 0 and stay quiet.
+
+        A non-zero exit from the read path is a blocked prompt on some hosts and a broken
+        turn on this one, so this is the invariant the whole package is built around.
+        """
+        env = dict(os.environ, HOME="/nonexistent", MEMVARA_HOME="/nonexistent")
+        for hook in ("session_start", "recall", "capture", "approve"):
+            with self.subTest(hook=hook):
+                proc = subprocess.run(
+                    [sys.executable, str(HOOKS / "run.py"), hook, "--host", "opencode"],
+                    input="{}", capture_output=True, text=True, env=env, timeout=120)
+                self.assertEqual(proc.returncode, 0,
+                                 f"{hook} exited {proc.returncode}: {proc.stderr[:300]}")
+                if proc.stdout.strip():
+                    json.loads(proc.stdout)
 
 
 class Version(unittest.TestCase):
@@ -585,7 +845,17 @@ class AuthScript(unittest.TestCase):
         self.assertNotIn("no local Python process", text,
                          "the README still claims no Python ships, and a Python script "
                          "is sitting in skills/memvara/scripts/")
-        self.assertIn("Nothing runs in the background", text)
+        # This used to require "Nothing runs in the background", which was true while the
+        # only Python here was a command the user typed. It is false now: the plugin runs
+        # python3 on every message and again when a session goes idle, without being
+        # asked. Requiring the positive claim instead means a README that quietly stops
+        # disclosing the background work fails exactly as loudly as one that denies it.
+        self.assertNotIn("Nothing runs in the background", text)
+        self.assertIn("What runs on your machine", text,
+                      "the README has no section saying what this plugin runs locally")
+        self.assertIn("~/.memvara/.hooks/", text,
+                      "the README does not name where the hooks account for themselves, "
+                      "and on this host that log is the only account there is")
 
 
 class SkillDiscovery(unittest.TestCase):

@@ -1,9 +1,31 @@
 # opencode-memvara
 
-Give OpenCode a memory it can prove — a **remote MCP** entry, not a
-JavaScript session plugin.
+Give OpenCode a memory it can prove — a hosted **MCP** endpoint, the skill
+that says how to use it, and a JavaScript plugin that makes memory automatic.
 
-Paste this into `opencode.json` (project) or `~/.config/opencode/opencode.json`:
+```
+node bin/install.mjs
+```
+
+That writes both halves into `~/.config/opencode/opencode.json`. For the
+endpoint alone, with nothing running on this machine, use `--mcp-only` and
+skip to the block below.
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "memvara": {
+      "type": "remote",
+      "url": "https://app.memvara.dev/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+Or paste this into `opencode.json` (project) or
+`~/.config/opencode/opencode.json` for the endpoint on its own:
 
 ```json
 {
@@ -20,10 +42,33 @@ Paste this into `opencode.json` (project) or `~/.config/opencode/opencode.json`:
 
 The first time OpenCode talks to the server it opens a browser so you can
 click Allow. You can also run `opencode mcp auth memvara`. That grant lasts
-90 days. Nothing runs in the background and no API key ships in this repo.
+90 days, and no API key ships in this repo.
 
-Do **not** add this repo to OpenCode's `"plugin": [...]` array. That path
-loads JavaScript hooks on `session.*`; Memvara does not ship those.
+## What runs on your machine
+
+Until 0.2.5 this page said nothing ran in the background and told you not to
+add this repo to OpenCode's `"plugin": [...]` array. Both were true then and
+neither is true now, so both are gone rather than softened.
+
+The installer registers `hooks/js/opencode.mjs`, and OpenCode loads it into
+its own process. On every message it runs `python3 hooks/run.py recall`, and
+on the first message of a session `session_start` as well; when a session
+goes idle it runs `capture`, which spends 12-14 seconds mining the turn that
+just ended. Capture is deliberately not awaited — measured on opencode
+1.18.20, an awaited hook holds the turn open for exactly as long as it runs,
+while an un-awaited one returns in a millisecond and its work still finishes.
+
+Nothing this plugin does is visible in the OpenCode interface, because
+OpenCode gives a plugin no channel to the screen. Its account of itself is
+`~/.memvara/.hooks/` — `hooks.log` for the read path and `capture.log` for
+the write path, where every run writes a line including the runs that decide
+to do nothing.
+
+Capture shells out to `claude -p` to mine a turn. If Claude Code is not
+installed, extraction logs that it could not run and raises an alert on the
+next prompt rather than storing nothing in silence.
+
+To have the endpoint and none of this, install with `--mcp-only`.
 
 ## Skill
 
@@ -62,15 +107,18 @@ interface on this host.
 
 ## Installer
 
-If you would rather merge the MCP block than edit JSON:
-
 ```
 node bin/install.mjs
 node bin/install.mjs --config ./opencode.json
+node bin/install.mjs --mcp-only
 ```
 
-It only writes `mcp.memvara`. It will refuse a config that already lists
-`opencode-memvara` as a JS plugin.
+It writes `mcp.memvara` and appends the plugin's absolute path to
+`plugin`, replacing an earlier entry for the same checkout rather than
+adding a second. `--mcp-only` writes the endpoint and no plugin. It refuses
+to write a plugin path that does not resolve, because OpenCode does not
+report a plugin entry that fails to load — a config naming a missing file is
+a plugin that is installed, listed, and silently never runs.
 
 ## Teach it your vocabulary
 
