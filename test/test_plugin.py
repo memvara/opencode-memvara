@@ -589,6 +589,40 @@ class Hooks(unittest.TestCase):
                          "a status line was rendered for a host that has no channel to "
                          "show one, so the renderer is inventing a key nobody reads")
 
+    def test_the_reply_is_ascii_so_a_chunk_boundary_cannot_split_a_character(self) -> None:
+        """The invariant that makes the shim's stream reading safe, pinned deliberately.
+
+        A review of this port claimed the shim corrupted UTF-8 at chunk boundaries, on the
+        grounds that accumulating stdout as `out += buffer` decodes each chunk alone and
+        turns a split multi-byte character into U+FFFD -- silently, since the surrounding
+        JSON still parses. The mechanism is real. The scenario was NOT: `json.dumps`
+        escapes non-ASCII by default, so a reply carrying an em dash goes out as the seven
+        ASCII bytes `\\u2014` and there is no multi-byte sequence for a boundary to split.
+        Measured: 16,371 bytes of real recall output, zero bytes above 127.
+
+        So the guard belongs on the property that makes it true rather than on the
+        corruption that cannot currently happen. Set `ensure_ascii=False` in the renderer
+        and this fails -- at which point the shim's decoding starts to matter and the
+        comment there stops being belt-and-braces.
+        """
+        sys.path.insert(0, str(HOOKS))
+        try:
+            from core import envelope  # noqa: PLC0415
+            from core.host import Reply  # noqa: PLC0415
+            import hosts.opencode as record  # noqa: PLC0415
+        finally:
+            sys.path.remove(str(HOOKS))
+        rendered = envelope.render(
+            record.HOST,
+            Reply(hook="recall", context="an em dash — and a star ⋈ and an accent é"))
+        raw = rendered.encode("utf-8")
+        high = [b for b in raw if b > 127]
+        self.assertEqual(
+            high, [],
+            f"the rendered reply carries {len(high)} non-ASCII bytes, so a stdout chunk "
+            "boundary can now split a character and the shim's decoding is load-bearing "
+            "rather than defensive")
+
     def test_a_hook_never_fails_a_turn_whatever_the_environment(self) -> None:
         """No home directory, no store, no credentials: exit 0 and stay quiet.
 
