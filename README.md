@@ -64,9 +64,16 @@ OpenCode gives a plugin no channel to the screen. Its account of itself is
 the write path, where every run writes a line including the runs that decide
 to do nothing.
 
-Capture shells out to `claude -p` to mine a turn. If Claude Code is not
-installed, extraction logs that it could not run and raises an alert on the
-next prompt rather than storing nothing in silence.
+Capture mines the turn with **your own model** — it runs `opencode run`
+with whatever you have configured and authenticated, so nothing else needs
+installing and nothing overrides the model you chose. `claude -p` stays as a
+fallback if you happen to have Claude Code; with neither, extraction logs that
+it could not run and raises an alert on the next prompt rather than storing
+nothing in silence.
+
+That makes capture's speed and quality yours too. On a small or free model
+expect it to fail more often — one measured run exceeded the 90-second timeout
+before a retry succeeded — and `capture.log` is where that shows.
 
 To have the endpoint and none of this, install with `--mcp-only`.
 

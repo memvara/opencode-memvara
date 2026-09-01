@@ -171,7 +171,11 @@ LIBRARY_HOOKS_PATH = "plugin/hooks"
 ALLOWED_HOOK_FILES = {
     "run.py", "recall.py", "capture.py", "session_start.py", "approve.py", "daemon.py",
     "core/__init__.py", "core/host.py", "core/envelope.py",
-    "hosts/__init__.py", "hosts/claude.py", "hosts/opencode.py",
+    # `hosts/codex.py` is another client's record: inert here, since the shim always
+    # passes `--host opencode` and `run.py` imports only the record it is given. Present
+    # because the tree is copied whole with zero transforms, and named rather than
+    # wildcarded so a file nobody read cannot ship from this plugin.
+    "hosts/__init__.py", "hosts/claude.py", "hosts/codex.py", "hosts/opencode.py",
     "js/shim.mjs", "js/opencode.mjs",
     "lib/__init__.py", "lib/extract.py", "lib/fast.py", "lib/hosted.py", "lib/ipc.py",
     "lib/open.py", "lib/standing.py", "lib/transcript.py", "lib/usage.py",
