@@ -171,7 +171,11 @@ LIBRARY_HOOKS_PATH = "plugin/hooks"
 ALLOWED_HOOK_FILES = {
     "run.py", "recall.py", "capture.py", "session_start.py", "approve.py", "daemon.py",
     "core/__init__.py", "core/host.py", "core/envelope.py",
-    "hosts/__init__.py", "hosts/claude.py", "hosts/opencode.py",
+    # `hosts/codex.py` is another client's record: inert here, since the shim always
+    # passes `--host opencode` and `run.py` imports only the record it is given. Present
+    # because the tree is copied whole with zero transforms, and named rather than
+    # wildcarded so a file nobody read cannot ship from this plugin.
+    "hosts/__init__.py", "hosts/claude.py", "hosts/codex.py", "hosts/opencode.py",
     "js/shim.mjs", "js/opencode.mjs",
     "lib/__init__.py", "lib/extract.py", "lib/fast.py", "lib/hosted.py", "lib/ipc.py",
     "lib/open.py", "lib/standing.py", "lib/transcript.py", "lib/usage.py",
@@ -691,6 +695,33 @@ class Hooks(unittest.TestCase):
             f"the rendered reply carries {len(high)} non-ASCII bytes, so a stdout chunk "
             "boundary can now split a character and the shim's decoding is load-bearing "
             "rather than defensive")
+
+    def test_capture_mines_with_this_host_s_own_model(self) -> None:
+        """The README promises "your own model", and nothing pinned it.
+
+        The record said `CLAUDE_CLI` until this week, so a regression here is a revert
+        rather than an invention -- and it would ship a page telling the user their own
+        model mines their turns while `claude -p` actually does it, with every test green.
+
+        The absence of `--model` is asserted too, and is the subtler half. Naming a model
+        in the argv would override the model this user configured and authenticated, from
+        inside a hook they never read, and could name one their account cannot reach --
+        at which point capture fails on every turn for a reason only `capture.log` shows.
+        """
+        sys.path.insert(0, str(HOOKS))
+        try:
+            import hosts.opencode as record  # noqa: PLC0415
+        finally:
+            sys.path.remove(str(HOOKS))
+        argv = record.HOST.extractor.argv
+        self.assertEqual(
+            argv[0], "opencode",
+            f"the first rung of the extractor chain is {argv[0]!r}, not this host's own "
+            "CLI, so the README's promise that capture uses your own model is false")
+        self.assertNotIn(
+            "--model", argv,
+            "the extractor pins a model, which overrides the one this user configured "
+            "and may name one their account cannot reach")
 
     def test_a_hook_never_fails_a_turn_whatever_the_environment(self) -> None:
         """No home directory, no store, no credentials: exit 0 and stay quiet.
