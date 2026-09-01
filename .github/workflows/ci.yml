@@ -21,9 +21,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Read skill.lock
+      - name: Read skill.lock and hooks.lock
         id: lock
-        run: echo "sha=$(awk -F= '/^sha=/{print $2}' skill.lock)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "sha=$(awk -F= '/^sha=/{print $2}' skill.lock)" >> "$GITHUB_OUTPUT"
+          echo "hooks=$(awk -F= '/^sha=/{print $2}' hooks.lock)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
         with:
@@ -46,6 +48,20 @@ jobs:
       # One shallow ref, no token, no API. `--depth 1` because only the tip's tree is read.
       - name: Fetch the library's default branch, so the drift check cannot skip
         run: git -C _library fetch --depth 1 origin main:refs/remotes/origin/main
+
+      # The checkout above is pinned to skill.lock's sha. The hook guards compare against
+      # hooks.lock's, which is a different commit and is not an object in that shallow
+      # clone -- so without this they fall through to the same rate-limited GitHub API the
+      # step above exists to avoid, and SKIP on the runs that lose the draw. Fetched by
+      # sha rather than re-cloning: one object walk instead of a second full checkout.
+      - name: Fetch the library commit hooks.lock pins, so the hook guards cannot skip
+        # Soft: fetching a sha that is not reachable from any remote ref fails, which
+        # would turn a guard that skips with a printed reason into a red job and a git
+        # error naming neither hooks nor drift. That state is real -- a lock pinning a
+        # branch commit after the branch is deleted. This step is an optimisation to
+        # avoid the rate-limited API, not a check, so it must not be the thing that
+        # fails.
+        run: git -C _library fetch --depth 1 origin ${{ steps.lock.outputs.hooks }} || true
 
       - uses: actions/setup-python@v7
         with:

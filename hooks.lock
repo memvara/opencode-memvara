@@ -1,0 +1,11 @@
+# The library commit whose plugin/hooks/ tree this plugin vendors.
+# CI diffs hooks/ against that SHA byte for byte, with no transforms at all -- unlike
+# skill.lock, which allows exactly one line.
+# host= names the record in hooks/hosts/ that this repository binds. OpenCode registers a
+# JavaScript module rather than a generated manifest, so unlike the shell hosts there is
+# no hooks.json here and nothing generates one; tools/generate.py refuses this host by
+# name for exactly that reason.
+repo=memvara/memvara
+sha=1d7819bd6adcc64945b06a0f2aeb348ec6cd72bb
+path=plugin/hooks
+host=opencode
