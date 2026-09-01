@@ -55,7 +55,13 @@ jobs:
       # step above exists to avoid, and SKIP on the runs that lose the draw. Fetched by
       # sha rather than re-cloning: one object walk instead of a second full checkout.
       - name: Fetch the library commit hooks.lock pins, so the hook guards cannot skip
-        run: git -C _library fetch --depth 1 origin ${{ steps.lock.outputs.hooks }}
+        # Soft: fetching a sha that is not reachable from any remote ref fails, which
+        # would turn a guard that skips with a printed reason into a red job and a git
+        # error naming neither hooks nor drift. That state is real -- a lock pinning a
+        # branch commit after the branch is deleted. This step is an optimisation to
+        # avoid the rate-limited API, not a check, so it must not be the thing that
+        # fails.
+        run: git -C _library fetch --depth 1 origin ${{ steps.lock.outputs.hooks }} || true
 
       - uses: actions/setup-python@v7
         with:

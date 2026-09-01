@@ -263,6 +263,75 @@ class Installer(unittest.TestCase):
                     ["node", str(ROOT / "bin" / "install.mjs"), "--config", str(cfg)])
             self.assertEqual(len(_json(cfg)["plugin"]), 1)
 
+    def test_a_tuple_entry_for_this_module_is_replaced_not_duplicated(self) -> None:
+        """The form `test_running_it_twice_registers_one_plugin` does not exercise.
+
+        OpenCode's type is `Array<string | [string, PluginOptions]>`, so an entry may be a
+        `[path, options]` tuple. The first dedup filter stringified the whole entry, and
+        `String([path, {}])` is `"…opencode.mjs,[object Object]"` -- which does not end
+        with the module path, so the tuple survived and a second registration was appended
+        on every run. Measured: two entries, and OpenCode loading the module twice means
+        two recalls per message and two captures per idle.
+        """
+        module = str((HOOKS / "js" / "opencode.mjs").resolve())
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = pathlib.Path(tmp) / "opencode.json"
+            cfg.write_text(json.dumps({"plugin": [[module, {"opt": 1}]]}),
+                           encoding="utf-8")
+            subprocess.check_call(
+                ["node", str(ROOT / "bin" / "install.mjs"), "--config", str(cfg)])
+            entries = _json(cfg)["plugin"]
+        self.assertEqual(
+            len(entries), 1,
+            f"the tuple entry was not recognised as this module, so it registers twice: "
+            f"{entries}")
+
+    def test_it_keeps_other_plugins_and_refuses_a_plugin_value_it_cannot_read(self) -> None:
+        """Two halves of not clobbering someone else's config.
+
+        The first version reset a non-array `plugin` to `[]`, which silently DELETED it --
+        `"plugin": "some-other-plugin"` came back as our path alone, with output reading
+        like success. And nothing checked that unrelated plugins survive at all, because
+        every installer test started from an empty config.
+        """
+        module = str((HOOKS / "js" / "opencode.mjs").resolve())
+        with tempfile.TemporaryDirectory() as tmp:
+            keep = pathlib.Path(tmp) / "keep.json"
+            keep.write_text(json.dumps({"plugin": ["someone-elses-plugin"]}),
+                            encoding="utf-8")
+            subprocess.check_call(
+                ["node", str(ROOT / "bin" / "install.mjs"), "--config", str(keep)])
+            entries = _json(keep)["plugin"]
+            self.assertIn("someone-elses-plugin", entries,
+                          "the installer dropped an unrelated plugin")
+            self.assertIn(module, entries)
+
+            bad = pathlib.Path(tmp) / "bad.json"
+            bad.write_text(json.dumps({"plugin": "some-other-plugin"}), encoding="utf-8")
+            proc = subprocess.run(
+                ["node", str(ROOT / "bin" / "install.mjs"), "--config", str(bad)],
+                capture_output=True, text=True)
+            self.assertNotEqual(proc.returncode, 0, "it accepted a plugin value it "
+                                                    "cannot interpret")
+            self.assertEqual(_json(bad)["plugin"], "some-other-plugin",
+                             "it refused and still overwrote the value")
+
+    def test_config_without_a_path_is_refused_rather_than_defaulted(self) -> None:
+        """A trailing `--config` used to fall through to the DEFAULT path.
+
+        That is not hypothetical: reviewing this file, `node bin/install.mjs --config`
+        wrote a real `~/.config/opencode/opencode.json` registering a worktree, and
+        reported success while doing it. A flag naming a target must not silently target
+        something else -- least of all the user's global config.
+        """
+        for argv in (["--config"], ["--config", "--mcp-only"]):
+            with self.subTest(argv=argv):
+                proc = subprocess.run(
+                    ["node", str(ROOT / "bin" / "install.mjs"), *argv],
+                    capture_output=True, text=True)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn("--config needs a path", proc.stderr + proc.stdout)
+
     def test_it_refuses_to_write_a_plugin_path_that_does_not_resolve(self) -> None:
         """The refusal that replaced the old one.
 

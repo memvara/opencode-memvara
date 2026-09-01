@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "memvara": {
+      "type": "remote",
+      "url": "https://app.memvara.dev/mcp",
+      "enabled": true
+    }
+  },
+  "plugin": [
+    "/Applications/workstation/opencode-memvara/.claude/worktrees/opencode-hooks/hooks/js/opencode.mjs"
+  ]
+}

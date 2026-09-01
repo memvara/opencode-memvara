@@ -39,7 +39,19 @@ function parseArgs(argv) {
   let config;
   let mcpOnly = false;
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--config") { config = argv[i + 1]; i++; }
+    if (argv[i] === "--config") {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith("--")) {
+        // Without this, a trailing `--config` fell through to the DEFAULT path and wrote
+        // the user's global config while reporting success. It happened during review of
+        // this file: a forgotten path created ~/.config/opencode/opencode.json pointing
+        // at a worktree. A flag that names a target must not silently target something
+        // else.
+        throw new Error("refusing to run: --config needs a path");
+      }
+      config = value;
+      i++;
+    }
     else if (argv[i] === "--mcp-only") { mcpOnly = true; }
   }
   return {
@@ -65,10 +77,26 @@ function main() {
       // is installed, listed, and silently never runs.
       throw new Error(`refusing to write: no plugin at ${PLUGIN}`);
     }
-    const plugins = Array.isArray(body.plugin) ? body.plugin : [];
-    // Replace any earlier entry for this checkout rather than appending a second one:
-    // re-running the installer must not register the same module twice.
-    body.plugin = plugins.filter((p) => !String(p).endsWith("/hooks/js/opencode.mjs"));
+    if (body.plugin !== undefined && !Array.isArray(body.plugin)) {
+      // Refuse rather than replace. The previous version reset a non-array value to `[]`,
+      // which silently DELETED whatever the user had written -- measured, `"plugin":
+      // "some-other-plugin"` came back as our path alone, with output reading like
+      // success. This installer is careful not to clobber anything else; a value it
+      // cannot interpret is a reason to stop, not to discard.
+      throw new Error(
+        `refusing to write: "plugin" in ${config} is not an array; fix it by hand first`);
+    }
+    // Replace any earlier entry for this module rather than appending a second one:
+    // re-running the installer must not register it twice.
+    //
+    // Entries may be a bare path OR a `[path, options]` tuple -- OpenCode's own type is
+    // `Array<string | [string, PluginOptions]>`. Stringifying the whole entry missed the
+    // tuple form entirely, because `String([path, {}])` is `"…opencode.mjs,[object
+    // Object]"`, so a user who passed options got a SECOND registration on every run and
+    // the module loaded twice: two recalls per message, two captures per idle.
+    const entryPath = (p) => (Array.isArray(p) ? p[0] : p);
+    body.plugin = (body.plugin ?? []).filter(
+      (p) => String(entryPath(p)) !== PLUGIN);
     body.plugin.push(PLUGIN);
   }
 
