@@ -839,7 +839,7 @@ class Version(unittest.TestCase):
     stopped guarding.
     """
 
-    VERSION = "0.2.3"
+    VERSION = "0.2.4"
     DECLARED = {
         'plugin.json',
     }
