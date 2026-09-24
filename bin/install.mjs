@@ -7,7 +7,7 @@
  *   node bin/install.mjs --mcp-only      # the endpoint alone, no local process
  *   node bin/install.mjs                 # ~/.config/opencode/opencode.json
  *
- * Until 0.2.5 this file REFUSED to register a plugin -- it threw on finding one, and said
+ * Until 0.2.4 this file REFUSED to register a plugin -- it threw on finding one, and said
  * "Memvara is remote MCP, not a session hook." That was true of every version that
  * shipped before this one. It is not true now: `hooks/` runs `python3` on this machine on
  * every message and when a session goes idle, and the README says so in the same commit

@@ -47,7 +47,7 @@ in this repo.
 
 ## What runs on your machine
 
-Until 0.2.5 this page said nothing ran in the background and told you not to
+Until 0.2.4 this page said nothing ran in the background and told you not to
 add this repo to OpenCode's `"plugin": [...]` array. Both were true then and
 neither is true now, so both are gone rather than softened.
 

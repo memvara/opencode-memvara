@@ -235,7 +235,7 @@ class ExampleConfig(unittest.TestCase):
 class Installer(unittest.TestCase):
     """It writes both halves now, and it used to refuse the second one.
 
-    Until 0.2.5 `test_refuses_js_plugin_array` asserted the installer THREW on a config
+    Until 0.2.4 `test_refuses_js_plugin_array` asserted the installer THREW on a config
     that named this repo as a JS plugin, because Memvara shipped no hooks and a config
     that said otherwise was a mistake. This repository ships them now, so that assertion
     is replaced rather than deleted: the refusal below is the one that still matters --
