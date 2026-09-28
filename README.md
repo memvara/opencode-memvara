@@ -59,6 +59,13 @@ just ended. Capture is deliberately not awaited — measured on opencode
 1.18.20, an awaited hook holds the turn open for exactly as long as it runs,
 while an un-awaited one returns in a millisecond and its work still finishes.
 
+OpenCode gives a plugin no transcript, so the plugin writes each session's
+messages to a file in `~/.memvara/.hooks/opencode/` for capture to read, and
+removes the file when that capture is done. The file is readable by your
+account only. Versions before memvara 0.17.0 wrote these files to
+`$TMPDIR/memvara-opencode/`, and the plugin removes any it finds there when it
+loads.
+
 Nothing this plugin does is visible in the OpenCode interface, because
 OpenCode gives a plugin no channel to the screen. Its account of itself is
 `~/.memvara/.hooks/` — `hooks.log` for the read path and `capture.log` for
@@ -80,9 +87,12 @@ To have the endpoint and none of this, install with `--mcp-only`.
 
 ### What else the hooks keep and send
 
-The hooks are copied from memvara/memvara v0.15.0, and `hooks.lock` names the
-exact commit. Besides the logs, they keep two kinds of small file in
-`~/.memvara/.hooks/`:
+The hooks are copied from memvara/memvara's main branch after v0.17.0, and
+`hooks.lock` names the exact commit. Everything they keep under `~/.memvara`
+is readable by your account only: each directory is created with mode `0700`
+and each file with `0600`, and a hook removes any group or other permission
+from a file or directory an older version left behind. Besides the logs, they
+keep two kinds of small file in `~/.memvara/.hooks/`:
 
 - `projects/` holds the git project of each directory the hooks ran in, for
   one hour. The project is the repository's `origin` remote, written as
